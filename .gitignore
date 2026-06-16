@@ -1,0 +1,16 @@
+# Whitelist: only track eyecare module
+/*
+!/.gitignore
+
+# Eyecare module
+!/eyecare/
+eyecare/config.json
+eyecare/__pycache__/
+
+# Eyecare distribution
+!/eyecare-dist/
+eyecare-dist/config.json
+
+# Project files
+!/README.md
+!/LICENSE

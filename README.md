@@ -1,5 +1,11 @@
 # `eyecare/eyecare_windows_pro_v1.0.2.py` — 护眼定时休息提醒
 
+[![GitHub stars](https://img.shields.io/github/stars/head-down/eyecare-windows-pro?style=flat)](https://github.com/head-down/eyecare-windows-pro/stargazers)
+[![GitHub license](https://img.shields.io/github/license/head-down/eyecare-windows-pro?style=flat)](https://github.com/head-down/eyecare-windows-pro/blob/master/LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat)](https://github.com/head-down/eyecare-windows-pro)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat&logo=python)](https://python.org)
+[![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat)](https://github.com/head-down/eyecare-windows-pro)
+
 基于 customtkinter 的全屏遮罩式护眼提醒工具。
 
 **工作流程：**
