@@ -6,19 +6,20 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat&logo=python)](https://python.org)
 [![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat)](https://github.com/head-down/eyecare-windows-pro)
 
-基于 customtkinter 的全屏遮罩式护眼提醒工具。
+基于 customtkinter 的全屏遮罩式休息提醒工具。
 
 **工作流程：**
-1. 初始化 `PhaseManager` 工作/休息计时器，后台线程每秒轮询 `tick()` 检查倒计时
-2. 工作倒计时到期 → 自动切换到休息，弹出 `BreakOverlay` 全屏遮罩（`overrideredirect(True)` + `SetWindowPos` 强制置顶，每 2 秒重新抬升）
-3. 休息倒计时到期 → 自动切换回工作，关闭遮罩，累计护眼次数
-4. `OpenInputDesktop` 检测锁屏状态，锁屏期间 `PhaseManager.freeze()` 冻结计时，解锁后补偿时间
-5. 跳过休息时累计跳过次数，超过 `skip_threshold` 阈值弹出健康提醒弹窗
+1. 启动后通过 `ConfigPersistence.load()` 加载 `config.json`，初始化 `PhaseManager(work_min, rest_min)` 工作/休息计时器
+2. 后台线程每秒调用 `PhaseManager.tick()`，到期自动切换：工作 → 休息（弹出 `BreakOverlay` 全屏遮罩），休息 → 工作（关闭遮罩并累计护眼次数）
+3. `BreakOverlay` 使用 `overrideredirect(True)` 无边框窗口 + `SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER)` 强制置顶，每 2 秒重新 `lift()` + `attributes("-topmost", True)` 防止全屏窗口抢占
+4. 遮罩显示倒计时（`Consolas 80px` 绿色数字），倒计时归零自动关闭；可按 `Escape` 键或点击按钮跳过
+5. `OpenInputDesktop` 检测锁屏状态，锁屏期间 `PhaseManager.freeze()` 冻结计时，解锁后 `unfreeze()` 补偿冻结时长
 
 **关键依赖：**
-- `customtkinter` — 现代 GUI 框架（Dark 主题）
+- `customtkinter` — 现代 GUI 框架
 - `pystray` + `Pillow` — 系统托盘图标
 - `winreg` / `winsound` / `ctypes` — Windows API（内置）
+- 配置文件：`config.json`（首次运行自动生成，`ConfigPersistence` 先写 `.tmp` 再 `os.replace` 原子写入）
 
 **运行方式：**
 
@@ -27,19 +28,22 @@ cd eyecare
 /d/software/python/python -u eyecare_windows_pro_v1.0.2.py
 ```
 
-或直接运行打包好的 exe：
-
-```bash
-cd eyecare-dist
-./护眼助手WindowsPro.exe
-```
-
 **配置区：**
 - `config.work_min = 20` — 工作时长（分钟）
 - `config.rest_min = 1` — 休息时长（分钟）
 - `config.skip_threshold = 3` — 今日跳过提醒阈值（次）
 - `config.auto_start = False` — Windows 开机自启（通过注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入 `EyeCarePro` 键值）
+- `config.paused = False` — 是否暂停计时
 
 **单实例锁与全局异常捕获：**
-- `CreateMutexW("EyeCarePro_SingleInstance")` 确保只运行一个实例，重复启动时 `GetLastError() == 183` 直接退出
-- exe 打包后闪退时，全局 `except` 捕获异常，在桌面生成 `eye_care_error.log`（含错误类型、堆栈跟踪、Python 版本、打包状态）
+- 程序入口通过 `CreateMutexW("EyeCarePro_SingleInstance")` 创建命名 Mutex，`GetLastError() == 183` 时 `sys.exit(0)` 直接退出
+- 根因：customtkinter 底层基于 tkinter，同进程重复初始化会导致 Tcl 解释器冲突；用 Windows 命名 Mutex 在系统级别保证互斥
+- 全局 `except` 捕获未处理异常，在桌面生成 `eye_care_error.log`（含错误类型、堆栈跟踪、Python 版本、打包状态），防止 exe 模式静默闪退
+
+**打包为 exe：**
+
+```bash
+/d/software/python/python -m pip install pyinstaller
+cd eyecare
+pyinstaller --onefile --windowed --name "护眼助手WindowsPro" eyecare_windows_pro_v1.0.2.py
+```
