@@ -197,6 +197,10 @@ class Config:
         self.today_skip_count = 0       # 今日跳过次数
         self.last_active_date = ""      # 上次活跃日期 (YYYY-MM-DD)
         self.skip_threshold = 3         # 今日跳过提醒阈值
+        
+        # === 强制模式 ===
+        self.force_mode = False             # 强制休息模式开关
+        self.force_mode_auto_triggered_date = ""  # 当天自动触发强制模式的日期 (YYYY-MM-DD)
 
 config = Config()
 
@@ -215,10 +219,11 @@ def _get_screen_size():
 
 # === 1. 强制休息遮罩窗口 ===
 class BreakOverlay:
-    def __init__(self, parent, duration_sec, on_close=None, on_skip=None):
+    def __init__(self, parent, duration_sec, on_close=None, on_skip=None, forced=False):
         self.on_close = on_close
         self.on_skip = on_skip
         self._destroyed = False
+        self._forced = forced
 
         self.window = tk.Toplevel(parent)
         self.window.overrideredirect(True)
@@ -234,8 +239,11 @@ class BreakOverlay:
 
         self._force_topmost()
 
-        self.window.protocol("WM_DELETE_WINDOW", self.skip)
-        self.window.bind("<Escape>", lambda _e: self.skip())
+        if self._forced:
+            self.window.protocol("WM_DELETE_WINDOW", lambda: None)
+        else:
+            self.window.protocol("WM_DELETE_WINDOW", self.skip)
+            self.window.bind("<Escape>", lambda _e: self.skip())
 
         # 内容区：用 frame + place 实现全分辨率垂直居中
         self._content_frame = ctk.CTkFrame(self.window, fg_color="transparent")
@@ -253,12 +261,19 @@ class BreakOverlay:
         )
         self.lbl_time.pack()
 
-        self.btn_skip = ctk.CTkButton(
-            self._content_frame, text="结束休息 (返回工作)", width=200, height=40,
-            fg_color="transparent", hover_color="#333333", text_color="#888888",
-            command=self.skip,
-        )
-        self.btn_skip.pack(pady=(30, 0))
+        if self._forced:
+            self.lbl_forced = ctk.CTkLabel(
+                self._content_frame, text="🔒 强制休息模式 — 本次无法跳过",
+                font=("Microsoft YaHei", 14), text_color="#888888",
+            )
+            self.lbl_forced.pack(pady=(10, 0))
+        else:
+            self.btn_skip = ctk.CTkButton(
+                self._content_frame, text="结束休息 (返回工作)", width=200, height=40,
+                fg_color="transparent", hover_color="#333333", text_color="#888888",
+                command=self.skip,
+            )
+            self.btn_skip.pack(pady=(30, 0))
 
         self.time_left = duration_sec
         self._after_id = None
@@ -328,7 +343,7 @@ class EyeCareApp(ctk.CTk):
         super().__init__()
 
         self.title(self.TITLE)
-        self.geometry("400x420")
+        self.geometry("400x470")
         self.resizable(False, False)
 
         self.persistence = ConfigPersistence(CONFIG_PATH)
@@ -347,7 +362,7 @@ class EyeCareApp(ctk.CTk):
         
         # 窗口居中显示
         self.update_idletasks()
-        w, h = 400, 420
+        w, h = 400, 470
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
@@ -412,6 +427,8 @@ class EyeCareApp(ctk.CTk):
             config.today_skip_count = data.get("today_skip_count", 0)
             config.last_active_date = data.get("last_active_date", "")
             config.skip_threshold = data.get("skip_threshold", 3)
+            config.force_mode = data.get("force_mode", False)
+            config.force_mode_auto_triggered_date = data.get("force_mode_auto_triggered_date", "")
         else:
             self.save_settings()
 
@@ -424,6 +441,11 @@ class EyeCareApp(ctk.CTk):
             config.today_rest_count = 0
             config.today_skip_count = 0
             config.last_active_date = today_str
+            
+            # 跨日自动关闭强制模式
+            if config.force_mode:
+                config.force_mode = False
+                config.force_mode_auto_triggered_date = ""
 
     # ==================== UI ====================
     def build_ui(self):
@@ -449,7 +471,13 @@ class EyeCareApp(ctk.CTk):
             self, text=self._get_stats_text(),
             font=("Microsoft YaHei", 13), text_color="#AAAAAA", justify="center"
         )
-        self.lbl_stats.pack(pady=(5, 10))
+        self.lbl_stats.pack(pady=(5, 5))
+
+        # 健康提示标签（跳过 ≥ 阈值时显示）
+        self.lbl_health_tip = ctk.CTkLabel(
+            self, text="", font=("Microsoft YaHei", 12),
+            text_color="#FF6B6B", justify="center",
+        )
 
         frame_btn = ctk.CTkFrame(self, fg_color="transparent")
         frame_btn.pack(pady=5)
@@ -471,6 +499,14 @@ class EyeCareApp(ctk.CTk):
         )
         self.btn_reset_stats.pack(side="left", padx=10)
 
+        # 强制模式开关
+        self.switch_force = ctk.CTkSwitch(
+            self, text="强制模式", command=self._toggle_force_mode,
+        )
+        self.switch_force.pack(pady=(5, 10))
+        if config.force_mode:
+            self.switch_force.select()
+
         self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self.update_ui_loop()
 
@@ -483,8 +519,34 @@ class EyeCareApp(ctk.CTk):
             self.lbl_stats.configure(text=self._get_stats_text())
             if config.today_skip_count >= config.skip_threshold:
                 self.lbl_stats.configure(text_color="#FF6B6B")
+                self._show_health_tip()
             else:
                 self.lbl_stats.configure(text_color="#AAAAAA")
+                self._hide_health_tip()
+
+    def _show_health_tip(self):
+        if hasattr(self, 'lbl_health_tip') and self.lbl_health_tip.winfo_exists():
+            self.lbl_health_tip.configure(
+                text="⚠️ 长时间用眼请注意休息，每20分钟远眺20秒 🌿"
+            )
+            self.lbl_health_tip.pack(pady=(0, 5))
+
+    def _hide_health_tip(self):
+        if hasattr(self, 'lbl_health_tip') and self.lbl_health_tip.winfo_exists():
+            self.lbl_health_tip.configure(text="")
+            self.lbl_health_tip.pack_forget()
+
+    def _toggle_force_mode(self):
+        config.force_mode = not config.force_mode
+        self.save_settings()
+
+    def _sync_force_switch(self):
+        """同步 CTkSwitch 状态到 config.force_mode（程序修改配置时调用）"""
+        if hasattr(self, 'switch_force'):
+            if config.force_mode:
+                self.switch_force.select()
+            else:
+                self.switch_force.deselect()
 
     # ==================== 窗口隐藏 / 恢复 ====================
     def hide_to_tray(self):
@@ -534,6 +596,7 @@ class EyeCareApp(ctk.CTk):
                 self, self.phases.max_time,
                 on_close=self._on_overlay_closed,
                 on_skip=self._on_overlay_skipped,
+                forced=config.force_mode,
             )
             self._update_tray_tooltip("休息中")
         else:
@@ -555,6 +618,16 @@ class EyeCareApp(ctk.CTk):
     def _on_overlay_skipped(self):
         config.total_skip_count += 1
         config.today_skip_count += 1
+
+        # 检查是否需要自动触发强制模式（当天只触发一次）
+        today_str = datetime.date.today().isoformat()
+        if (config.today_skip_count >= config.skip_threshold
+                and not config.force_mode
+                and config.force_mode_auto_triggered_date != today_str):
+            config.force_mode = True
+            config.force_mode_auto_triggered_date = today_str
+            self._sync_force_switch()
+
         self._update_stats_display()
         self.save_settings()
 
@@ -581,8 +654,8 @@ class EyeCareApp(ctk.CTk):
         # 锚点定位（先隐藏，定位后再显示，避免闪烁）
         self.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - 420) // 2
-        y = self.winfo_y() + (self.winfo_height() - 280) // 2
-        reminder.geometry(f"420x280+{x}+{y}")
+        y = self.winfo_y() + (self.winfo_height() - 220) // 2
+        reminder.geometry(f"420x220+{x}+{y}")
 
         ctk.CTkLabel(reminder, text="⚠️", font=("Segoe UI Emoji", 40)).pack(pady=(20, 5))
         ctk.CTkLabel(
@@ -591,12 +664,9 @@ class EyeCareApp(ctk.CTk):
         ).pack(pady=(0, 10))
 
         msg = (
-            f"您今天已经跳过 {config.today_skip_count} 次休息了！\n"
-            "长时间盯着屏幕会导致：\n"
-            "• 眼睛干涩、疲劳\n"
-            "• 视力下降\n"
-            "• 颈椎和肩膀酸痛\n\n"
-            "建议：每工作 20 分钟，远眺 20 秒 🌿"
+            f"您今天已经跳过 {config.today_skip_count} 次休息了！\n\n"
+            "为保护您的用眼健康，已自动开启「强制模式」\n"
+            "下次休息时将无法跳过，请做好准备 🌿"
         )
         ctk.CTkLabel(
             reminder, text=msg, font=("Microsoft YaHei", 12),
@@ -604,7 +674,7 @@ class EyeCareApp(ctk.CTk):
         ).pack(pady=(0, 15))
 
         ctk.CTkButton(
-            reminder, text="我知道了，下次一定休息 👀", width=220,
+            reminder, text="我知道了，这次好好休息 👀", width=220,
             fg_color="#4CAF50", hover_color="#45A049", command=reminder.destroy,
         ).pack(pady=(0, 10))
 
@@ -685,6 +755,10 @@ class EyeCareApp(ctk.CTk):
             config.today_rest_count = 0
             config.today_skip_count = 0
             config.last_active_date = today_str
+            if config.force_mode:
+                config.force_mode = False
+                config.force_mode_auto_triggered_date = ""
+                self._sync_force_switch()
             self._update_stats_display()
             self.save_settings()
 
@@ -865,6 +939,8 @@ class EyeCareApp(ctk.CTk):
             "today_skip_count": config.today_skip_count,
             "last_active_date": config.last_active_date,
             "skip_threshold": config.skip_threshold,
+            "force_mode": config.force_mode,
+            "force_mode_auto_triggered_date": config.force_mode_auto_triggered_date,
         }
         self.persistence.save(data)
         self.persistence.set_autostart(config.auto_start)
