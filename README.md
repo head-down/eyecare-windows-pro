@@ -11,9 +11,8 @@
 ## 截图
 
 <p align="center">
-  <img src="docs/screenshots/main-window.png" width="46%" alt="主窗口" />
-  &nbsp;
-  <img src="docs/screenshots/settings-dialog.png" width="46%" alt="设置对话框" />
+  <img src="docs/screenshots/main-window.png" width="48%" alt="主窗口" />
+  <img src="docs/screenshots/settings-dialog.png" width="48%" alt="设置对话框" />
 </p>
 
 <p align="center">
@@ -21,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/system-tray.png" width="45%" alt="系统托盘菜单" />
+  <img src="docs/screenshots/system-tray.png" width="35%" alt="系统托盘菜单" />
 </p>
 
 ## 星标趋势
