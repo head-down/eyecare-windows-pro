@@ -10,13 +10,19 @@
 
 ## 截图
 
-![主窗口](docs/screenshots/main-window.png)
+<p align="center">
+  <img src="docs/screenshots/main-window.png" width="46%" alt="主窗口" />
+  &nbsp;
+  <img src="docs/screenshots/settings-dialog.png" width="46%" alt="设置对话框" />
+</p>
 
-![全屏休息遮罩](docs/screenshots/break-overlay.png)
+<p align="center">
+  <img src="docs/screenshots/break-overlay.png" width="90%" alt="全屏休息遮罩" />
+</p>
 
-![系统托盘菜单](docs/screenshots/system-tray.png)
-
-![设置对话框](docs/screenshots/settings-dialog.png)
+<p align="center">
+  <img src="docs/screenshots/system-tray.png" width="45%" alt="系统托盘菜单" />
+</p>
 
 ## 星标趋势
 
