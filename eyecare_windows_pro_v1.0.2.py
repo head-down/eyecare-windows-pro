@@ -26,15 +26,101 @@ except ImportError:
     HAS_SYSTRAY = False
 
 # === 锁屏检测 ===
+# 实测 Win11：锁屏期间 OpenInputDesktop 仍返回 "Default" 桌面，无法据此判断；
+# WTS SessionFlags 才可靠（WTS_SESSIONSTATE_LOCK=0 / UNLOCK=1）。
+DESKTOP_READOBJECTS = 0x0001
+UOI_NAME = 2
+WTSSessionInfoEx = 25
+WTS_CURRENT_SESSION = 0xFFFFFFFF
+WTS_SESSIONSTATE_LOCK = 0
+
+if IS_WINDOWS:
+    _wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+    _wtsapi32.WTSQuerySessionInformationW.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)), ctypes.POINTER(ctypes.c_ulong),
+    ]
+    _wtsapi32.WTSQuerySessionInformationW.restype = ctypes.c_int
+    _wtsapi32.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+else:
+    _wtsapi32 = None
+
+
+class _WTSINFOEX_LEVEL1(ctypes.Structure):
+    _fields_ = [
+        ("SessionId", ctypes.c_ulong),
+        ("SessionState", ctypes.c_ulong),
+        ("SessionFlags", ctypes.c_long),
+        ("WinStationName", ctypes.c_wchar * 33),
+        ("UserName", ctypes.c_wchar * 21),
+        ("DomainName", ctypes.c_wchar * 18),
+        ("LogonTime", ctypes.c_longlong),
+        ("ConnectTime", ctypes.c_longlong),
+        ("DisconnectTime", ctypes.c_longlong),
+        ("LastInputTime", ctypes.c_longlong),
+        ("CurrentTime", ctypes.c_longlong),
+    ]
+
+
+class _WTSINFOEX_LEVEL(ctypes.Union):
+    _fields_ = [("Level1", _WTSINFOEX_LEVEL1), ("_raw", ctypes.c_byte * 512)]
+
+
+class _WTSINFOEX(ctypes.Structure):
+    _fields_ = [("Level", ctypes.c_ulong), ("Data", _WTSINFOEX_LEVEL)]
+
+
+def _wts_session_flags():
+    """当前会话的锁屏标志：0=已锁屏 1=未锁屏；查询失败返回 None。"""
+    if _wtsapi32 is None:
+        return None
+    buf = ctypes.POINTER(ctypes.c_void_p)()
+    needed = ctypes.c_ulong(0)
+    ok = _wtsapi32.WTSQuerySessionInformationW(
+        None, WTS_CURRENT_SESSION, WTSSessionInfoEx,
+        ctypes.byref(buf), ctypes.byref(needed),
+    )
+    if not ok:
+        return None
+    try:
+        info = ctypes.cast(buf, ctypes.POINTER(_WTSINFOEX)).contents
+        return info.Data.Level1.SessionFlags
+    finally:
+        _wtsapi32.WTSFreeMemory(buf)
+
+
+def _input_desktop_name():
+    """返回当前输入桌面名称（未锁屏时为 "Default"），获取失败返回 None。"""
+    user32 = ctypes.windll.user32
+    hdesk = user32.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
+    if not hdesk:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(256)
+        needed = ctypes.c_ulong(0)
+        ok = user32.GetUserObjectInformationW(
+            hdesk, UOI_NAME, buf, ctypes.sizeof(buf), ctypes.byref(needed)
+        )
+        return buf.value if ok else None
+    finally:
+        user32.CloseDesktop(hdesk)
+
+
 def is_workstation_locked():
-    """Windows: 检测工作站是否已锁屏。OpenInputDesktop 仅在活动交互桌面上成功。"""
+    """Windows: 检测工作站是否已锁屏。
+
+    以 WTS SessionFlags 为准；无法查询时退回比较输入桌面名称，
+    后者还能覆盖 UAC / 密码屏保这类安全桌面。
+    """
     if not IS_WINDOWS:
         return False
-    hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0)
-    if hdesk:
-        ctypes.windll.user32.CloseDesktop(hdesk)
-        return False
-    return True
+    flags = _wts_session_flags()
+    if flags == WTS_SESSIONSTATE_LOCK:
+        return True
+    name = _input_desktop_name()
+    if name is None:
+        return flags is None  # WTS 也说不出状态时才按锁屏处理
+    return name.lower() != "default"
 
 
 # === 路径工具 (核心修复：确保打包后 config.json 读写在 exe 同级目录) ===
